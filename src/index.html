@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nomad · Blue / Green</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script type="module" src="/app.js"></script>
+    <style type="text/tailwindcss">
+      @source inline("text-{red,orange,amber,yellow,lime,green,emerald,teal,cyan,sky,blue,indigo,violet,purple,fuchsia,pink,rose}-{300,400,800,950}");
+    </style>
+    <style>
+      :root {
+        color-scheme: dark;
+        --accent: var(--color-__PAGE_COLOR__-400);
+        --accent-light: var(--color-__PAGE_COLOR__-300);
+        --accent-deep: var(--color-__PAGE_COLOR__-950);
+        --accent-border: var(--color-__PAGE_COLOR__-800);
+      }
+      .theme-page {
+        min-height: 100vh;
+        background:
+          radial-gradient(ellipse at top left, var(--accent-deep), transparent 65%),
+          var(--color-slate-950);
+      }
+      .panel {
+        border: 1px solid var(--accent-border);
+        border-radius: 1rem;
+        background: linear-gradient(
+          135deg,
+          color-mix(in srgb, var(--accent-deep) 45%, var(--color-slate-900)),
+          var(--color-slate-900)
+        );
+        padding: 1.5rem;
+      }
+      .accent,
+      .link-button {
+        color: var(--accent);
+      }
+      .theme-border {
+        border-color: var(--accent-border);
+      }
+      .button {
+        background: var(--accent);
+        color: var(--color-slate-950);
+        border-radius: 0.5rem;
+      }
+      .button:hover {
+        background: var(--accent-light);
+      }
+      .link-button:hover {
+        color: var(--accent-light);
+      }
+      button {
+        cursor: pointer;
+      }
+      input {
+        accent-color: var(--accent);
+      }
+      :is(button, input):focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 3px;
+      }
+      .history-marker {
+        width: 0.75rem;
+        flex-shrink: 0;
+        border-radius: 0.125rem;
+      }
+      .history-failure {
+        color: var(--color-red-400);
+        text-align: center;
+        font-weight: bold;
+        line-height: 2rem;
+      }
+      .novel {
+        height: 16rem;
+        overflow: auto;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        background: var(--color-slate-950);
+        color: var(--color-slate-200);
+        border-radius: 0.5rem;
+        padding: 1rem;
+        line-height: 1.9;
+      }
+      .stream-stats {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem 1rem;
+        margin: 0.75rem 0;
+        font-size: 0.75rem;
+        color: var(--color-slate-400);
+      }
+    </style>
+  </head>
+  <body class="theme-page text-slate-200 antialiased">
+    <main class="mx-auto max-w-6xl px-6 py-12">
+      <header class="mb-10 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p class="text-sm text-slate-400">页面加载时版本 · 刷新后更新</p>
+          <h1 id="page-version" class="accent mt-2 text-2xl font-semibold">—</h1>
+        </div>
+        <span id="protocol" class="theme-border rounded-full border px-4 py-2 text-sm"
+          >检测页面协议…</span
+        >
+      </header>
+      <section class="panel mb-6">
+        <div class="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p class="text-xs tracking-widest text-slate-400">LATEST HTTP RESPONSE</p>
+            <h2 id="current" class="accent mt-2 text-3xl font-semibold">等待响应</h2>
+          </div>
+          <button id="request" class="button px-4 py-2 font-medium">立即请求</button>
+        </div>
+        <p id="message" class="mt-4 text-slate-400">—</p>
+        <p id="instance" class="mt-2 break-all font-mono text-xs text-slate-400">—</p>
+        <div class="mt-6 flex flex-wrap gap-6 text-sm">
+          <span>成功 <b id="success" class="accent">0</b></span>
+          <span>失败 <b id="failure" class="text-red-400">0</b></span>
+          <span>耗时 <b id="latency">—</b></span>
+          <label class="flex items-center gap-2"
+            ><input id="poll" type="checkbox" checked /> 半秒请求</label
+          >
+        </div>
+        <div
+          id="history"
+          class="mt-5 flex h-8 gap-1 overflow-hidden"
+          aria-label="最近 60 次请求"
+        ></div>
+        <p class="mt-2 text-xs text-slate-400">
+          色块 = 响应版本，红色 × = 请求失败；保留最近 60 次。页面主题固定，接口和连接可切换到新版。
+        </p>
+      </section>
+
+      <div class="grid gap-6 md:grid-cols-2">
+        <section class="panel">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-medium">
+              WebSocket <span class="text-xs text-slate-400">双向通信</span>
+            </h2>
+            <button id="ws-reconnect" class="link-button text-sm">模拟断线</button>
+          </div>
+          <p id="ws-status" class="my-3 text-sm text-slate-400">连接中…</p>
+          <div id="ws-novel" class="novel" aria-label="WebSocket 小说"></div>
+          <div class="stream-stats">
+            <span>Cursor <b id="ws-cursor">0</b></span>
+            <span>Reconnects <b id="ws-retries">0</b></span>
+            <span>Recovery <b id="ws-recovery">-</b></span>
+            <span id="ws-stall">Waiting</span>
+            <span>Duplicate chars <b id="ws-duplicates">0</b></span>
+            <span>Skipped chars <b id="ws-skipped">0</b></span>
+            <span id="ws-continuity">-</span>
+          </div>
+          <form id="echo-form" class="mb-4 flex gap-2">
+            <input
+              id="echo"
+              value="Hello Nomad"
+              maxlength="1000"
+              class="theme-border min-w-0 flex-1 rounded-lg border bg-slate-950 px-3 py-2 text-sm"
+              aria-label="发送内容"
+            />
+            <button class="button px-3 text-sm">发送</button>
+          </form>
+          <div
+            id="ws-log"
+            class="h-32 overflow-auto whitespace-pre-wrap break-all font-mono text-xs leading-6 text-slate-400"
+          ></div>
+        </section>
+        <section class="panel">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-medium">
+              SSE <span class="text-xs text-slate-400">服务端推送</span>
+            </h2>
+            <button id="sse-reconnect" class="link-button text-sm">模拟断线</button>
+          </div>
+          <p id="sse-status" class="my-3 text-sm text-slate-400">连接中…</p>
+          <div id="sse-novel" class="novel" aria-label="SSE 小说"></div>
+          <div class="stream-stats">
+            <span>Cursor <b id="sse-cursor">0</b></span>
+            <span>Reconnects <b id="sse-retries">0</b></span>
+            <span>Recovery <b id="sse-recovery">-</b></span>
+            <span id="sse-stall">Waiting</span>
+            <span>Duplicate chars <b id="sse-duplicates">0</b></span>
+            <span>Skipped chars <b id="sse-skipped">0</b></span>
+            <span id="sse-continuity">-</span>
+          </div>
+          <p class="mb-4 text-xs text-slate-400">
+            客户端统一管理 200 ms 重试；1500 ms 无消息时主动重连。
+          </p>
+          <div
+            id="sse-log"
+            class="h-32 overflow-auto whitespace-pre-wrap break-all font-mono text-xs leading-6 text-slate-400"
+          ></div>
+        </section>
+      </div>
+      <aside class="panel mt-6 text-sm leading-7 text-slate-400">
+        <h2 class="mb-2 font-semibold text-slate-200">演示顺序 · Blue / Green</h2>
+        <ol class="list-inside list-decimal">
+          <li>启动第一个版本，通过固定入口打开本页面。</li>
+          <li>构建新版并随机选择主题色，部署后由 Nomad 在健康检查通过时自动切流。</li>
+          <li>旧页面保持原主题与结构；接口和长连接切到新版后仍继续工作，新开页面对比新版。</li>
+          <li>旧实例停止或点击「模拟断线」后，观察断线标记、首段恢复耗时与游标连续性。</li>
+          <li>取消断点续传并模拟断线，观察从头播放的重复字数；勾选后再重置可重新演示。</li>
+        </ol>
+        <p class="mt-3 text-xs">
+          页面不模拟流量切换。HTTP/2 浏览器演示需要 HTTPS；协议标识来自浏览器实际协商结果。WebSocket
+          使用 HTTP/1.1 Upgrade，不等同于 HTTP/2。
+        </p>
+      </aside>
+    </main>
+  </body>
+</html>

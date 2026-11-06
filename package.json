@@ -1,0 +1,19 @@
+{
+  "name": "nomad-demo",
+  "version": "0.0.7",
+  "private": true,
+  "type": "module",
+  "module": "index.ts",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^7"
+  }
+}

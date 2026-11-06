@@ -1,0 +1,122 @@
+[env]
+IMAGE_NAME = "nomad-demo"
+
+[tools]
+bun = "1.4.4"
+jq = "latest"
+nomad = "latest"
+
+[tasks.dev]
+alias = "default"
+run = "bun run dev"
+
+[tasks.start]
+run = "bun run start"
+
+[tasks.test]
+run = "bun test"
+
+[tasks.typecheck]
+run = "bun run typecheck"
+
+[tasks.up_version]
+description = "版本加一，逢十进位"
+run = '''
+#!/usr/bin/env bun
+const file = Bun.file("package.json");
+const pkg = await file.json();
+const next = String(BigInt(pkg.version.replaceAll(".", "")) + 1n).padStart(3, "0");
+pkg.version = `${next.slice(0, -2)}.${next.at(-2)}.${next.at(-1)}`;
+await Bun.write(file, JSON.stringify(pkg, null, 2) + "\n");
+console.log(pkg.version);
+'''
+
+[tasks.build]
+description = "递增版本、随机主题色并构建镜像"
+depends = ["up_version"]
+run = '''
+version=$(jq -r .version package.json)
+color=${DEPLOY_COLOR:-$(shuf -n 1 -e orange amber yellow lime green emerald teal cyan sky blue indigo violet purple fuchsia pink rose)}
+echo "构建 $version · $color"
+docker build --build-arg APP_VERSION="$version" --build-arg DEPLOY_COLOR="$color" -t "${IMAGE_NAME}:$version" .
+'''
+
+[tasks.nomad]
+description = "运行 Nomad 开发代理"
+run = "nomad agent -dev"
+
+[tasks.network]
+description = "创建应用与网关共用的 Docker bridge 网络"
+run = "docker network inspect nomad-demo >/dev/null 2>&1 || docker network create --driver bridge nomad-demo"
+
+[tasks.gateway]
+depends = ["network"]
+description = "部署 Nginx 固定入口（8080 端口）"
+run = "nomad job run -detach nomad/gateway.nomad.hcl"
+
+[tasks."gateway:traefik"]
+description = "部署 Traefik 固定入口（8081 端口）"
+depends = ["network"]
+run = "nomad job run -detach nomad/traefik.nomad.hcl"
+
+[tasks.deploy]
+depends = ["network"]
+description = "部署指定版本，省略时读取 package.json；可用于回退镜像"
+usage = 'arg "[version]" help="镜像版本，例如 0.2.1；默认使用 package.json"'
+wait_for = ["build"]
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+version=${usage_version:-$(jq -r .version package.json)}
+
+image="${IMAGE_NAME}:$version"
+docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image"
+nomad job run -var "image=$image" -var "version=$version" nomad/app.nomad.hcl
+'''
+
+[tasks.images]
+description = "列出本项目已构建的镜像及版本"
+run = 'docker image ls "$IMAGE_NAME"'
+
+[tasks."images:remove"]
+description = "删除指定版本或 --all 删除本项目所有带 tag 镜像（不强制）"
+usage = '''
+arg "[version]" help="要删除的镜像版本，例如 0.2.1"
+flag "--all" help="删除本项目所有带 tag 镜像" conflicts="version"
+'''
+confirm = "确认删除镜像？删除后本地回滚需要重新拉取或构建"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${usage_all:-false}" = "true" ]; then
+  docker image ls "$IMAGE_NAME" --filter dangling=false --format '{{"{{.Repository}}:{{.Tag}}"}}' | xargs -r docker image rm
+else
+  docker image rm "${IMAGE_NAME}:${usage_version:?请指定版本或使用 --all}"
+fi
+'''
+
+[tasks."images:prune"]
+description = "清理本项目无 tag 的构建残留，保留所有版本 tag"
+confirm = "确认清理本项目未使用且无 tag 的镜像？"
+run = 'docker image prune --force --filter "label=org.opencontainers.image.title=nomad-demo"'
+
+[tasks.logs]
+description = "查看应用最近一次实例的标准输出"
+run = "nomad alloc logs -job nomad-demo app"
+
+[tasks."logs:error"]
+description = "查看应用最近一次实例的错误日志"
+run = "nomad alloc logs -job -stderr nomad-demo app"
+
+[tasks.history]
+description = "查看 Nomad job 配置版本历史（不是镜像版本）"
+run = "nomad job history nomad-demo"
+
+[tasks.stop]
+description = "停止应用，保留 Nomad job 历史与网关"
+confirm = "确认停止 Demo 应用？两个网关将暂时无法访问业务"
+run = "nomad job stop nomad-demo"
+
+[tasks.status]
+description = "查看部署与实例状态"
+run = "nomad job status nomad-demo"
